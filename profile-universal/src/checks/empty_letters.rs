@@ -169,12 +169,22 @@ mod tests {
         );
     }
 
-    // Note: The Python test also checks empty hangul glyphs by modifying cmap in-memory
-    // to map hangul syllable codepoints (0xB646, 0xD7A0) to the 'space' glyph and
-    // verifying a WARN with "empty-hangul-letter". This requires cmap modification
-    // that maps arbitrary codepoints to existing glyphs by name, which goes beyond
-    // the current remap_glyph utility. The hangul empty glyph code path is tested
-    // indirectly through the check logic.
+    #[test]
+    fn test_empty_letters_hangul_warn() {
+        // Map 2 non-modern hangul syllable codepoints to 'space' glyph (which is blank).
+        // These are in the blank_ok_set (ALL_HANGUL minus MODERN_HANGUL), so the check
+        // should yield a WARN with "empty-hangul-letter" instead of a FAIL.
+        let mut testable = test_able("source-sans-pro/TTF/SourceSansPro-Bold.ttf");
+        fontspector_checkapi::codetesting::remap_glyph(&mut testable, 0xB646, "space").unwrap();
+        fontspector_checkapi::codetesting::remap_glyph(&mut testable, 0xD7A0, "space").unwrap();
+        let results = run_check(super::empty_letters, testable);
+        assert_results_contain(
+            &results,
+            StatusCode::Warn,
+            Some("empty-hangul-letter".to_string()),
+        );
+        assert_messages_contain(&results, "Found 2 empty hangul glyph(s).");
+    }
 }
 
 fn is_blank_glyph(f: &TestFont, gid: GlyphId) -> Result<bool, FontspectorError> {

@@ -84,15 +84,19 @@ fn cjk_not_enough_glyphs(f: &Testable, context: &Context) -> CheckFnResult {
 #[cfg(test)]
 mod tests {
     use fontspector_checkapi::{
-        codetesting::{assert_pass, assert_results_contain, run_check, test_able},
+        codetesting::{
+            assert_messages_contain, assert_pass, assert_results_contain, remap_glyph, run_check,
+            test_able,
+        },
         StatusCode,
     };
+
+    use fontations::skrifa::{font::FontRef, Tag};
+    use fontations::write::FontBuilder;
 
     #[test]
     fn test_cjk_not_enough_glyphs_pass() {
         // NotoSansJP is a CJK font with plenty of CJK glyphs (>150), should PASS
-        // (Python test uses Iansui-Regular.ttf which is not available;
-        // NotoSansJP is an equivalent CJK font with sufficient glyphs)
         let testable = test_able("cjk/NotoSansJP[wght].ttf");
         let results = run_check(super::cjk_not_enough_glyphs, testable);
         assert_pass(&results);
@@ -106,9 +110,61 @@ mod tests {
         assert_results_contain(&results, StatusCode::Skip, Some("not-cjk".to_string()));
     }
 
-    // Note: The Python test also modifies Montserrat's cmap and OS/2 codepage bits
-    // in-memory to simulate a font that claims CJK but has only 1-2 CJK glyphs,
-    // triggering WARN "cjk-not-enough-glyphs". This requires OS/2 table modification
-    // which is not available in the current Rust test utilities. A dedicated test font
-    // with CJK codepage flags but very few CJK glyphs would be needed for that test.
+    /// Set the CJK codepage bit (bit 17) in OS/2 ulCodePageRange1.
+    /// ulCodePageRange1 is at byte offset 78 in the OS/2 table (for version >= 1).
+    fn set_os2_cjk_codepage_bit(testable: &mut fontspector_checkapi::prelude::Testable) {
+        let os2_tag = Tag::new(b"OS/2");
+        let f = FontRef::new(&testable.contents).unwrap();
+        let os2_data = f.table_data(os2_tag).unwrap();
+        let mut os2_bytes = os2_data.as_ref().to_vec();
+        // ulCodePageRange1 is a big-endian u32 at offset 78
+        let cp_range = u32::from_be_bytes(os2_bytes[78..82].try_into().unwrap());
+        let new_cp_range = cp_range | (1 << 17);
+        os2_bytes[78..82].copy_from_slice(&new_cp_range.to_be_bytes());
+        // Rebuild font with modified OS/2 table
+        let mut builder = FontBuilder::new();
+        builder.add_raw(os2_tag, &os2_bytes);
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if tag != os2_tag {
+                if let Some(table_data) = f.table_data(tag) {
+                    builder.add_raw(tag, table_data);
+                }
+            }
+        }
+        testable.contents = builder.build();
+    }
+
+    #[test]
+    fn test_cjk_not_enough_glyphs_warn_one_glyph() {
+        // Modify Montserrat to claim CJK and have only one CJK glyph
+        let mut testable = test_able("montserrat/Montserrat-Regular.ttf");
+        // Add first CJK Unified Ideograph codepoint mapped to glyph "A"
+        remap_glyph(&mut testable, 0x4E00, "A").unwrap();
+        // Set the CJK codepage bit in OS/2
+        set_os2_cjk_codepage_bit(&mut testable);
+        let results = run_check(super::cjk_not_enough_glyphs, testable);
+        assert_results_contain(
+            &results,
+            StatusCode::Warn,
+            Some("cjk-not-enough-glyphs".to_string()),
+        );
+        assert_messages_contain(&results, "There is only one CJK glyph");
+    }
+
+    #[test]
+    fn test_cjk_not_enough_glyphs_warn_two_glyphs() {
+        // Modify Montserrat to claim CJK and have two CJK glyphs
+        let mut testable = test_able("montserrat/Montserrat-Regular.ttf");
+        remap_glyph(&mut testable, 0x4E00, "A").unwrap();
+        remap_glyph(&mut testable, 0x4E01, "B").unwrap();
+        set_os2_cjk_codepage_bit(&mut testable);
+        let results = run_check(super::cjk_not_enough_glyphs, testable);
+        assert_results_contain(
+            &results,
+            StatusCode::Warn,
+            Some("cjk-not-enough-glyphs".to_string()),
+        );
+        assert_messages_contain(&results, "There are only 2 CJK glyphs");
+    }
 }

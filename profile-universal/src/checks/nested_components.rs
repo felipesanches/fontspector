@@ -73,7 +73,17 @@ fn nested_components(f: &Testable, context: &Context) -> CheckFnResult {
 
 #[cfg(test)]
 mod tests {
-    use fontspector_checkapi::codetesting::{assert_pass, run_check, test_able};
+    use fontspector_checkapi::codetesting::{
+        assert_pass, assert_results_contain, run_check, test_able,
+    };
+    use fontspector_checkapi::StatusCode;
+
+    use fontations::skrifa::{
+        font::FontRef,
+        raw::{tables::glyf::Glyph, types::Tag, TableProvider},
+        GlyphNames,
+    };
+    use fontations::write::FontBuilder;
 
     #[test]
     fn test_nested_components_pass() {
@@ -83,11 +93,97 @@ mod tests {
         assert_pass(&results);
     }
 
-    // Note: The Python test modifies glyf table in-memory to create nested components
-    // by setting quotedbl's first component to "second" (which itself has components).
-    // This requires glyf table manipulation which is not available in the current
-    // Rust test utilities. A dedicated test font with pre-existing nested components
-    // would be needed for a FAIL test.
+    #[test]
+    fn test_nested_components_fail() {
+        // Modify Nunito so that quotedbl's first component points to "second",
+        // which itself has components, creating a nested component situation.
+        let mut testable = test_able("nunito/Nunito-Regular.ttf");
+
+        let f = FontRef::new(&testable.contents).unwrap();
+        let names = GlyphNames::new(&f);
+
+        // Find glyph IDs for "quotedbl" and "second"
+        let quotedbl_gid = names
+            .iter()
+            .find(|(_gid, name)| name.as_str() == "quotedbl")
+            .map(|(gid, _)| gid)
+            .expect("quotedbl glyph not found");
+        let second_gid = names
+            .iter()
+            .find(|(_gid, name)| name.as_str() == "second")
+            .map(|(gid, _)| gid)
+            .expect("second glyph not found");
+
+        // Verify that quotedbl is composite and second is composite
+        let loca = f.loca(None).unwrap();
+        let glyf = f.glyf().unwrap();
+        assert!(
+            matches!(
+                loca.get_glyf(quotedbl_gid, &glyf),
+                Ok(Some(Glyph::Composite(_)))
+            ),
+            "quotedbl should be a composite glyph"
+        );
+        assert!(
+            matches!(
+                loca.get_glyf(second_gid, &glyf),
+                Ok(Some(Glyph::Composite(_)))
+            ),
+            "second should be a composite glyph"
+        );
+
+        // Get the raw glyf table data and modify it
+        let glyf_tag = Tag::new(b"glyf");
+        let glyf_data = f.table_data(glyf_tag).unwrap();
+        let mut glyf_bytes = glyf_data.as_ref().to_vec();
+
+        // Find the offset of quotedbl's glyph data in the glyf table using loca
+        let loca_tag = Tag::new(b"loca");
+        let head = f.head().unwrap();
+        let loca_data = f.table_data(loca_tag).unwrap();
+        let loca_bytes = loca_data.as_ref();
+        let gid_val = quotedbl_gid.to_u32() as usize;
+
+        let glyf_offset = if head.index_to_loc_format() == 0 {
+            // Short format: offsets are uint16, actual offset = value * 2
+            let idx = gid_val * 2;
+            (u16::from_be_bytes(loca_bytes[idx..idx + 2].try_into().unwrap()) as usize) * 2
+        } else {
+            // Long format: offsets are uint32
+            let idx = gid_val * 4;
+            u32::from_be_bytes(loca_bytes[idx..idx + 4].try_into().unwrap()) as usize
+        };
+
+        // In a composite glyph, the data starts with:
+        //   int16 numberOfContours (should be -1)
+        //   int16 xMin, yMin, xMax, yMax (bounding box = 10 bytes total header)
+        // Then component records follow:
+        //   uint16 flags
+        //   uint16 glyphIndex  <-- this is what we modify
+        let component_glyph_id_offset = glyf_offset + 10 + 2; // skip header (10) + flags (2)
+        glyf_bytes[component_glyph_id_offset..component_glyph_id_offset + 2]
+            .copy_from_slice(&(second_gid.to_u32() as u16).to_be_bytes());
+
+        // Rebuild font with modified glyf table
+        let mut builder = FontBuilder::new();
+        builder.add_raw(glyf_tag, &glyf_bytes);
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if tag != glyf_tag {
+                if let Some(table_data) = f.table_data(tag) {
+                    builder.add_raw(tag, table_data);
+                }
+            }
+        }
+        testable.contents = builder.build();
+
+        let results = run_check(super::nested_components, testable);
+        assert_results_contain(
+            &results,
+            StatusCode::Fail,
+            Some("found-nested-components".to_string()),
+        );
+    }
 }
 
 fn get_depth(glyph_id: GlyphId, loca: &Loca, glyf: &Glyf) -> u32 {
