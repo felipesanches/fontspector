@@ -32,12 +32,50 @@ fn maxp_num_glyphs(t: &Testable, _context: &Context) -> CheckFnResult {
 
 #[cfg(test)]
 mod tests {
-    use fontspector_checkapi::codetesting::{assert_pass, run_check, test_able};
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use fontspector_checkapi::{
+        codetesting::{assert_pass, assert_results_contain, run_check, test_able},
+        StatusCode,
+    };
+
+    use super::maxp_num_glyphs;
 
     #[test]
-    fn test_loca_maxp_num_glyphs_pass() {
+    fn test_pass_good_font() {
         let testable = test_able("nunito/Nunito-Regular.ttf");
-        let result = run_check(super::maxp_num_glyphs, testable);
+        let result = run_check(maxp_num_glyphs, testable);
         assert_pass(&result);
+    }
+
+    #[test]
+    fn test_fail_corrupt_loca() {
+        let mut testable = test_able("nunito/Nunito-Regular.ttf");
+        use fontations::skrifa::{font::FontRef, Tag};
+
+        let f = FontRef::new(&testable.contents).unwrap();
+        let maxp_data = f.table_data(Tag::new(b"maxp")).unwrap();
+
+        // Change numGlyphs (bytes 4-5) to a different value
+        let mut new_maxp = maxp_data.as_bytes().to_vec();
+        if new_maxp.len() >= 6 {
+            let orig = u16::from_be_bytes([new_maxp[4], new_maxp[5]]);
+            let new_val = orig.wrapping_sub(1);
+            new_maxp[4] = (new_val >> 8) as u8;
+            new_maxp[5] = (new_val & 0xFF) as u8;
+        }
+
+        let mut builder = fontations::write::FontBuilder::new();
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if tag == Tag::new(b"maxp") {
+                builder.add_raw(tag, &new_maxp);
+            } else if let Some(table_data) = f.table_data(tag) {
+                builder.add_raw(tag, table_data);
+            }
+        }
+        testable.contents = builder.build();
+        let result = run_check(maxp_num_glyphs, testable);
+        assert_results_contain(&result, StatusCode::Fail, Some("corrupt".to_string()));
     }
 }

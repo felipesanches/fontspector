@@ -40,20 +40,109 @@ fn GDEF_spacing_marks(f: &Testable, context: &Context) -> CheckFnResult {
 
 #[cfg(test)]
 mod tests {
-    use fontspector_checkapi::codetesting::{assert_pass, assert_skip, run_check, test_able};
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use fontspector_checkapi::{
+        codetesting::{
+            assert_pass, assert_results_contain, assert_skip, remove_table, run_check, test_able,
+        },
+        StatusCode,
+    };
+
+    use super::GDEF_spacing_marks;
 
     #[test]
-    fn test_gdef_spacing_marks_skip_no_gdef() {
-        let mut testable = test_able("familysans/FamilySans-Regular.ttf");
-        fontspector_checkapi::codetesting::remove_table(&mut testable, b"GDEF");
-        let result = run_check(super::GDEF_spacing_marks, testable);
+    fn test_skip_no_gdef() {
+        let testable = test_able("gdef_test.ttf");
+        let result = run_check(GDEF_spacing_marks, testable);
         assert_skip(&result);
     }
 
     #[test]
-    fn test_gdef_spacing_marks_pass() {
+    fn test_skip_no_gdef_removed() {
+        let mut testable = test_able("familysans/FamilySans-Regular.ttf");
+        remove_table(&mut testable, b"GDEF");
+        let result = run_check(GDEF_spacing_marks, testable);
+        assert_skip(&result);
+    }
+
+    #[test]
+    fn test_pass_existing_font() {
         let testable = test_able("nunito/Nunito-Regular.ttf");
-        let result = run_check(super::GDEF_spacing_marks, testable);
+        let result = run_check(GDEF_spacing_marks, testable);
         assert_pass(&result);
+    }
+
+    #[test]
+    fn test_pass_empty_gdef() {
+        let mut testable = test_able("gdef_test.ttf");
+        use fontations::skrifa::{font::FontRef, Tag};
+
+        let f = FontRef::new(&testable.contents).unwrap();
+        let gdef_bytes: Vec<u8> = vec![
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+            0x00, 0x00,
+        ];
+        let mut builder = fontations::write::FontBuilder::new();
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if let Some(table_data) = f.table_data(tag) {
+                builder.add_raw(tag, table_data);
+            }
+        }
+        builder.add_raw(Tag::new(b"GDEF"), &gdef_bytes);
+        testable.contents = builder.build();
+        let result = run_check(GDEF_spacing_marks, testable);
+        assert_pass(&result);
+    }
+
+    #[test]
+    fn test_warn_spacing_mark_glyph() {
+        // 'A' has non-zero width. Mark it as a mark glyph in GDEF.
+        let mut testable = test_able("gdef_test.ttf");
+        use fontations::skrifa::{font::FontRef, MetadataProvider, Tag};
+
+        let f = FontRef::new(&testable.contents).unwrap();
+        let a_gid = f.charmap().map('A' as u32).unwrap().to_u32() as u16;
+
+        let gdef_bytes: Vec<u8> = vec![
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            0x00,
+            0x0C,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x02,
+            0x00,
+            0x01,
+            (a_gid >> 8) as u8,
+            (a_gid & 0xFF) as u8,
+            (a_gid >> 8) as u8,
+            (a_gid & 0xFF) as u8,
+            0x00,
+            0x03,
+        ];
+        let mut builder = fontations::write::FontBuilder::new();
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if let Some(table_data) = f.table_data(tag) {
+                builder.add_raw(tag, table_data);
+            }
+        }
+        builder.add_raw(Tag::new(b"GDEF"), &gdef_bytes);
+        testable.contents = builder.build();
+        let result = run_check(GDEF_spacing_marks, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Warn,
+            Some("spacing-mark-glyphs".to_string()),
+        );
     }
 }

@@ -100,4 +100,165 @@ mod tests {
         let result = run_check(regular_coords_correct, testable);
         assert_pass(&result);
     }
+
+    #[test]
+    fn test_fail_wght_not_400() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Instance 0 is "Regular".
+        fvar.axis_instance_arrays.instances[0].coordinates[0] =
+            fontations::write::types::Fixed::from_f64(500.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(regular_coords_correct, testable);
+        assert_results_contain(&result, StatusCode::Fail, Some("wght-not-400".to_string()));
+    }
+
+    #[test]
+    fn test_fail_no_regular_instance() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // Rename all instances so none is "Regular"
+        for inst in &mut fvar.axis_instance_arrays.instances {
+            inst.subfamily_name_id = fontations::write::types::NameId::new(999);
+        }
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(regular_coords_correct, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Fail,
+            Some("no-regular-instance".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_fail_wdth_not_100() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Set wdth to 0 for instance 0.
+        fvar.axis_instance_arrays.instances[0].coordinates[1] =
+            fontations::write::types::Fixed::from_f64(0.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(regular_coords_correct, testable);
+        assert_results_contain(&result, StatusCode::Fail, Some("wdth-not-100".to_string()));
+    }
+
+    #[test]
+    fn test_fail_slnt_not_0() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{
+                from_obj::ToOwnedTable,
+                tables::fvar::{Fvar, VariationAxisRecord},
+                FontBuilder,
+            },
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // Add slnt axis (becomes index 2)
+        fvar.axis_instance_arrays.axes.push(VariationAxisRecord {
+            axis_tag: fontations::write::types::Tag::new(b"slnt"),
+            min_value: fontations::write::types::Fixed::from_f64(-12.0),
+            default_value: fontations::write::types::Fixed::from_f64(0.0),
+            max_value: fontations::write::types::Fixed::from_f64(0.0),
+            flags: 0,
+            axis_name_id: fontations::write::types::NameId::new(300),
+        });
+        // Add slnt coordinate (0.0) to all instances
+        for inst in &mut fvar.axis_instance_arrays.instances {
+            inst.coordinates
+                .push(fontations::write::types::Fixed::from_f64(0.0));
+        }
+        // Set slnt to 12.0 for the Regular instance (index 0), coordinate index 2
+        fvar.axis_instance_arrays.instances[0].coordinates[2] =
+            fontations::write::types::Fixed::from_f64(12.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(regular_coords_correct, testable);
+        assert_results_contain(&result, StatusCode::Fail, Some("slnt-not-0".to_string()));
+    }
+
+    #[test]
+    fn test_fail_ital_not_0() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{
+                from_obj::ToOwnedTable,
+                tables::fvar::{Fvar, VariationAxisRecord},
+                FontBuilder,
+            },
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // Add ital axis (becomes index 2)
+        fvar.axis_instance_arrays.axes.push(VariationAxisRecord {
+            axis_tag: fontations::write::types::Tag::new(b"ital"),
+            min_value: fontations::write::types::Fixed::from_f64(0.0),
+            default_value: fontations::write::types::Fixed::from_f64(0.0),
+            max_value: fontations::write::types::Fixed::from_f64(1.0),
+            flags: 0,
+            axis_name_id: fontations::write::types::NameId::new(301),
+        });
+        // Add ital coordinate (0.0) to all instances
+        for inst in &mut fvar.axis_instance_arrays.instances {
+            inst.coordinates
+                .push(fontations::write::types::Fixed::from_f64(0.0));
+        }
+        // Set ital to 123.0 for the Regular instance (index 0), coordinate index 2
+        fvar.axis_instance_arrays.instances[0].coordinates[2] =
+            fontations::write::types::Fixed::from_f64(123.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(regular_coords_correct, testable);
+        assert_results_contain(&result, StatusCode::Fail, Some("ital-not-0".to_string()));
+    }
 }

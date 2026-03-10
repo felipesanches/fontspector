@@ -102,4 +102,146 @@ mod tests {
             Some("unusual-slnt-range".to_string()),
         );
     }
+
+    #[test]
+    fn test_fail_wght_out_of_range_zero() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Set wght to 0.0 for instance 0.
+        fvar.axis_instance_arrays.instances[0].coordinates[0] =
+            fontations::write::types::Fixed::from_f64(0.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(axis_ranges_correct, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Fail,
+            Some("wght-out-of-range".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_fail_wght_out_of_range_1001() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Set wght to 1001.0 for instance 0.
+        fvar.axis_instance_arrays.instances[0].coordinates[0] =
+            fontations::write::types::Fixed::from_f64(1001.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(axis_ranges_correct, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Fail,
+            Some("wght-out-of-range".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_fail_wdth_out_of_range() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Set wdth to 0.0 for instance 0.
+        fvar.axis_instance_arrays.instances[0].coordinates[1] =
+            fontations::write::types::Fixed::from_f64(0.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(axis_ranges_correct, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Fail,
+            Some("wdth-out-of-range".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_warn_wdth_greater_than_1000() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("cabinvfbeta/CabinVFBeta.ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // CabinVFBeta axes: 0=wght, 1=wdth. Set wdth to 1001.0 for instance 0.
+        fvar.axis_instance_arrays.instances[0].coordinates[1] =
+            fontations::write::types::Fixed::from_f64(1001.0);
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(axis_ranges_correct, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Warn,
+            Some("wdth-greater-than-1000".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_pass_slnt_fixed() {
+        use fontations::{
+            skrifa::raw::TableProvider,
+            write::{from_obj::ToOwnedTable, tables::fvar::Fvar, FontBuilder},
+        };
+        use fontspector_checkapi::{FileTypeConvert, TTF};
+
+        let mut testable = test_able("varfont/inter/Inter[slnt,wght].ttf");
+        let f = TTF.from_testable(&testable).unwrap();
+        let mut fvar: Fvar = f.font().fvar().unwrap().to_owned_table();
+        // Fix the slnt axis range by flipping min/max
+        for axis in &mut fvar.axis_instance_arrays.axes {
+            if axis.axis_tag == fontations::write::types::Tag::new(b"slnt") {
+                let min = axis.min_value;
+                let max = axis.max_value;
+                axis.min_value = fontations::write::types::Fixed::from_f64(-(max.to_f64()));
+                axis.max_value = fontations::write::types::Fixed::from_f64(-(min.to_f64()));
+            }
+        }
+        let new_bytes = FontBuilder::new()
+            .add_table(&fvar)
+            .unwrap()
+            .copy_missing_tables(f.font())
+            .build();
+        testable.contents = new_bytes;
+        let result = run_check(axis_ranges_correct, testable);
+        assert_pass(&result);
+    }
 }

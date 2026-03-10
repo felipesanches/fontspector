@@ -87,12 +87,69 @@ fn points_out_of_bounds(t: &Testable, _context: &Context) -> CheckFnResult {
 
 #[cfg(test)]
 mod tests {
-    use fontspector_checkapi::codetesting::{assert_pass, run_check, test_able};
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use fontspector_checkapi::{
+        codetesting::{assert_pass, assert_results_contain, run_check, test_able},
+        StatusCode,
+    };
+
+    use super::points_out_of_bounds;
 
     #[test]
-    fn test_points_out_of_bounds_pass() {
+    fn test_pass_good_font() {
         let testable = test_able("familysans/FamilySans-Regular.ttf");
-        let result = run_check(super::points_out_of_bounds, testable);
+        let result = run_check(points_out_of_bounds, testable);
         assert_pass(&result);
+    }
+
+    #[test]
+    fn test_warn_points_out_of_bounds() {
+        // Modify glyph bbox to be tighter than its actual points
+        let mut testable = test_able("nunito/Nunito-Regular.ttf");
+        use fontations::skrifa::{font::FontRef, raw::TableProvider, GlyphId, Tag};
+
+        let f = FontRef::new(&testable.contents).unwrap();
+        let glyf_data = f.table_data(Tag::new(b"glyf")).unwrap();
+        let loca = f.loca(None).unwrap();
+        let mut new_glyf = glyf_data.as_bytes().to_vec();
+
+        // Find the first simple glyph with points and shrink its bbox
+        // Glyph 1 (.notdef or space) may be empty; let's use a higher glyph
+        for gid_val in 1..f.maxp().unwrap().num_glyphs() {
+            let gid = GlyphId::new(gid_val.into());
+            if let Some(offset) = loca.get_raw(gid_val as usize) {
+                let next_offset = loca.get_raw(gid_val as usize + 1).unwrap_or(0);
+                let offset = offset as usize;
+                let next_offset = next_offset as usize;
+                if next_offset > offset && next_offset - offset >= 10 {
+                    // Simple glyph header: numberOfContours(2) + xMin(2) + yMin(2) + xMax(2) + yMax(2)
+                    let num_contours = i16::from_be_bytes([new_glyf[offset], new_glyf[offset + 1]]);
+                    if num_contours > 0 {
+                        // Set xMax to 0 to force points to be "out of bounds"
+                        new_glyf[offset + 6] = 0;
+                        new_glyf[offset + 7] = 0;
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut builder = fontations::write::FontBuilder::new();
+        for table_record in f.table_directory.table_records() {
+            let tag = table_record.tag.get();
+            if tag == Tag::new(b"glyf") {
+                builder.add_raw(tag, &new_glyf);
+            } else if let Some(table_data) = f.table_data(tag) {
+                builder.add_raw(tag, table_data);
+            }
+        }
+        testable.contents = builder.build();
+        let result = run_check(points_out_of_bounds, testable);
+        assert_results_contain(
+            &result,
+            StatusCode::Warn,
+            Some("points-out-of-bounds".to_string()),
+        );
     }
 }
